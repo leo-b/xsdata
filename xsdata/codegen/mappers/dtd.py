@@ -118,7 +118,9 @@ class DtdMapper:
     @classmethod
     def build_extension(cls, target: Class, data_type: DataType):
         ext_type = AttrType(qname=str(data_type), native=True)
-        extension = Extension(type=ext_type, restrictions=Restrictions())
+        extension = Extension(
+            tag=Tag.EXTENSION, type=ext_type, restrictions=Restrictions()
+        )
         target.extensions.append(extension)
 
     @classmethod
@@ -133,7 +135,7 @@ class DtdMapper:
             params = cls.build_occurs(content.occur)
             params.update(
                 {
-                    "choice": str(id(content)),
+                    "choice": id(content),
                     "min_occurs": 0,
                 }
             )

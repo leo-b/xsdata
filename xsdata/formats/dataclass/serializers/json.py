@@ -11,6 +11,7 @@ from typing import Iterator
 from typing import Optional
 from typing import TextIO
 from typing import Tuple
+from typing import Union
 
 from xsdata.formats.bindings import AbstractSerializer
 from xsdata.formats.converter import converter
@@ -37,8 +38,10 @@ class JsonSerializer(AbstractSerializer):
 
     :param config: Serializer configuration
     :param context: Model context provider
-    :param dict_factory: Override default dict factory to add further logic
-    :param dump_factory: Override default json.dump call with another implementation
+    :param dict_factory: Override default dict factory to add further
+        logic
+    :param dump_factory: Override default json.dump call with another
+        implementation
     :param indent: Output indentation level
     """
 
@@ -61,7 +64,7 @@ class JsonSerializer(AbstractSerializer):
         :param out: The output stream
         :param obj: The input dataclass instance
         """
-        indent: Optional[int] = None
+        indent: Optional[Union[int, str]] = None
         if self.indent:
             warnings.warn(
                 "JsonSerializer indent property is deprecated, use SerializerConfig",
@@ -69,7 +72,7 @@ class JsonSerializer(AbstractSerializer):
             )
             indent = self.indent
         elif self.config.pretty_print:
-            indent = 2
+            indent = self.config.pretty_print_indent or 2
 
         self.dump_factory(self.convert(obj), out, indent=indent)
 

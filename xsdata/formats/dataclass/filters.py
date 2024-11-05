@@ -8,6 +8,7 @@ from typing import Dict
 from typing import Iterable
 from typing import List
 from typing import Optional
+from typing import Set
 from typing import Tuple
 from typing import Type
 
@@ -19,8 +20,11 @@ from xsdata.codegen.models import Attr
 from xsdata.codegen.models import AttrType
 from xsdata.codegen.models import Class
 from xsdata.formats.converter import converter
+from xsdata.formats.dataclass.models.elements import XmlType
 from xsdata.models.config import DocstringStyle
+from xsdata.models.config import ExtensionType
 from xsdata.models.config import GeneratorConfig
+from xsdata.models.config import GeneratorExtension
 from xsdata.models.config import ObjectType
 from xsdata.models.config import OutputFormat
 from xsdata.utils import collections
@@ -36,6 +40,7 @@ class Filters:
 
     __slots__ = (
         "substitutions",
+        "extensions",
         "class_case",
         "field_case",
         "constant_case",
@@ -48,16 +53,41 @@ class Filters:
         "module_safe_prefix",
         "docstring_style",
         "max_line_length",
+        "union_type",
+        "subscriptable_types",
         "relative_imports",
         "postponed_annotations",
         "format",
         "import_patterns",
+        "default_class_annotation",
     )
 
     def __init__(self, config: GeneratorConfig):
         self.substitutions: Dict[ObjectType, Dict[str, str]] = defaultdict(dict)
         for sub in config.substitutions.substitution:
             self.substitutions[sub.type][sub.search] = sub.replace
+
+        self.import_patterns: Dict[str, Dict[str, Set[str]]] = defaultdict(
+            lambda: defaultdict(set)
+        )
+        self.extensions: Dict[ExtensionType, List[GeneratorExtension]] = defaultdict(
+            list
+        )
+        for ext in config.extensions.extension:
+            self.extensions[ext.type].append(ext)
+
+            is_annotation = ext.type is ExtensionType.DECORATOR
+            patterns = self.import_patterns[ext.module_path][ext.func_name]
+
+            if is_annotation:
+                patterns.add(f"@{ext.func_name}")
+            else:
+                patterns.update(
+                    [
+                        f"({ext.func_name}",
+                        f" {ext.func_name})",
+                    ]
+                )
 
         self.class_case: Callable = config.conventions.class_name.case
         self.field_case: Callable = config.conventions.field_name.case
@@ -71,18 +101,23 @@ class Filters:
         self.module_safe_prefix: str = config.conventions.module_name.safe_prefix
         self.docstring_style: DocstringStyle = config.output.docstring_style
         self.max_line_length: int = config.output.max_line_length
+        self.union_type: bool = config.output.union_type
+        self.subscriptable_types: bool = config.output.subscriptable_types
         self.relative_imports: bool = config.output.relative_imports
         self.postponed_annotations: bool = config.output.postponed_annotations
         self.format = config.output.format
 
         # Build things
-        self.import_patterns = self.build_import_patterns()
+        for module, imports in self.build_import_patterns().items():
+            for imp, patterns in imports.items():
+                self.import_patterns[module][imp].update(patterns)
+
+        self.default_class_annotation = self.build_class_annotation(self.format)
 
     def register(self, env: Environment):
         env.globals.update(
             {
                 "docstring_name": self.docstring_style.name.lower(),
-                "class_annotation": self.build_class_annotation(self.format),
             }
         )
         env.filters.update(
@@ -93,6 +128,8 @@ class Filters:
                 "field_metadata": self.field_metadata,
                 "field_definition": self.field_definition,
                 "class_name": self.class_name,
+                "class_bases": self.class_bases,
+                "class_annotations": self.class_annotations,
                 "class_params": self.class_params,
                 "format_string": self.format_string,
                 "format_docstring": self.format_docstring,
@@ -109,21 +146,21 @@ class Filters:
         )
 
     @classmethod
-    def build_class_annotation(cls, format: OutputFormat) -> str:
+    def build_class_annotation(cls, fmt: OutputFormat) -> str:
         args = []
-        if not format.repr:
+        if not fmt.repr:
             args.append("repr=False")
-        if not format.eq:
+        if not fmt.eq:
             args.append("eq=False")
-        if format.order:
+        if fmt.order:
             args.append("order=True")
-        if format.unsafe_hash:
+        if fmt.unsafe_hash:
             args.append("unsafe_hash=True")
-        if format.frozen:
+        if fmt.frozen:
             args.append("frozen=True")
-        if format.slots:
+        if fmt.slots:
             args.append("slots=True")
-        if format.kw_only:
+        if fmt.kw_only:
             args.append("kw_only=True")
 
         return f"@dataclass({', '.join(args)})" if args else "@dataclass"
@@ -145,6 +182,38 @@ class Filters:
         name = self.safe_name(name, self.class_safe_prefix, self.class_case)
         return self.apply_substitutions(name, ObjectType.CLASS)
 
+    def class_bases(self, obj: Class, class_name: str) -> List[str]:
+        """Return a list of base class names."""
+        bases = []
+        for obj_ext in obj.extensions:
+            bases.append(self.type_name(obj_ext.type))
+
+        derived = len(obj.extensions) > 0
+        for ext in self.extensions[ExtensionType.CLASS]:
+            is_valid = not derived or ext.apply_if_derived
+            if is_valid and ext.pattern.match(class_name):
+                if ext.prepend:
+                    bases.insert(0, ext.func_name)
+                else:
+                    bases.append(ext.func_name)
+
+        return collections.unique_sequence(bases)
+
+    def class_annotations(self, obj: Class, class_name: str) -> List[str]:
+        """Return a list of decorator names."""
+        annotations = [self.default_class_annotation]
+
+        derived = len(obj.extensions) > 0
+        for ext in self.extensions[ExtensionType.DECORATOR]:
+            is_valid = not derived or ext.apply_if_derived
+            if is_valid and ext.pattern.match(class_name):
+                if ext.prepend:
+                    annotations.insert(0, f"@{ext.func_name}")
+                else:
+                    annotations.append(f"@{ext.func_name}")
+
+        return collections.unique_sequence(annotations)
+
     def apply_substitutions(self, name: str, obj_type: ObjectType) -> str:
         for search, replace in self.substitutions[obj_type].items():
             name = re.sub(rf"{search}", rf"{replace}", name)
@@ -163,10 +232,10 @@ class Filters:
         metadata = self.field_metadata(attr, parent_namespace, parents)
 
         kwargs: Dict[str, Any] = {}
-        if attr.fixed:
+        if attr.fixed or attr.is_prohibited:
             kwargs["init"] = False
 
-        if default_value is not False:
+        if default_value is not False and not attr.is_prohibited:
             key = self.FACTORY_KEY if attr.is_factory else self.DEFAULT_KEY
             kwargs[key] = default_value
 
@@ -281,6 +350,9 @@ class Filters:
         self, attr: Attr, parent_namespace: Optional[str], parents: List[str]
     ) -> Dict:
         """Return a metadata dictionary for the given attribute."""
+
+        if attr.is_prohibited:
+            return {"type": XmlType.IGNORE}
 
         name = namespace = None
 
@@ -588,15 +660,24 @@ class Filters:
 
     def field_type(self, attr: Attr, parents: List[str]) -> str:
         """Generate type hints for the given attribute."""
+
+        if attr.is_prohibited:
+            return "Any"
+
         type_names = collections.unique_sequence(
             self.field_type_name(x, parents) for x in attr.types
         )
 
-        result = ", ".join(type_names)
-        if len(type_names) > 1:
-            result = f"Union[{result}]"
+        if self.union_type:
+            result = " | ".join(type_names)
+        else:
+            result = ", ".join(type_names)
+            if len(type_names) > 1:
+                result = f"Union[{result}]"
 
         iterable = "Tuple[{}, ...]" if self.format.frozen else "List[{}]"
+        if self.subscriptable_types:
+            iterable = iterable.lower()
 
         if attr.is_tokens:
             result = iterable.format(result)
@@ -608,12 +689,12 @@ class Filters:
             return result
 
         if attr.is_dict:
-            return "Dict[str, str]"
+            return "dict[str, str]" if self.subscriptable_types else "Dict[str, str]"
 
         if attr.is_nillable or (
             attr.default is None and (attr.is_optional or not self.format.kw_only)
         ):
-            return f"Optional[{result}]"
+            return f"None | {result}" if self.union_type else f"Optional[{result}]"
 
         return result
 
@@ -632,14 +713,22 @@ class Filters:
             self.field_type_name(x, parents) for x in choice.types
         )
 
-        result = ", ".join(type_names)
-        if len(type_names) > 1:
-            result = f"Union[{result}]"
+        if self.union_type:
+            result = " | ".join(type_names)
+        else:
+            result = ", ".join(type_names)
+            if len(type_names) > 1:
+                result = f"Union[{result}]"
 
         if choice.is_tokens:
-            result = (
-                f"Tuple[{result}, ...]" if self.format.frozen else f"List[{result}]"
-            )
+            iterable = "Tuple[{}, ...]" if self.format.frozen else "List[{}]"
+            if self.subscriptable_types:
+                iterable = iterable.lower()
+
+            result = iterable.format(result)
+
+        if self.subscriptable_types:
+            return f"type[{result}]"
 
         return f"Type[{result}]"
 
@@ -654,6 +743,9 @@ class Filters:
             name = f'"{outer_str}.{name}"'
         elif attr_type.circular:
             name = f'"{name}"'
+
+        if self.postponed_annotations:
+            name = name.strip('"')
 
         return name
 
@@ -687,7 +779,7 @@ class Filters:
             elif names:
                 result.append(f"from {library} import {', '.join(names)}")
 
-        return "\n".join(result)
+        return "\n".join(sorted(result))
 
     @classmethod
     def build_import_patterns(cls) -> Dict[str, Dict]:
@@ -703,6 +795,7 @@ class Filters:
                 "Tuple": ["Tuple["],
                 "Type": ["Type["],
                 "Union": ["Union["],
+                "Any": type_patterns("Any"),
             },
             "xml.etree.ElementTree": {"QName": type_patterns("QName")},
             "xsdata.models.datatype": {
@@ -716,4 +809,13 @@ class Filters:
 
     @classmethod
     def build_type_patterns(cls, x: str) -> Tuple:
-        return f": {x} =", f"[{x}]", f"[{x},", f" {x},", f" {x}]", f" {x}("
+        return (
+            f": {x} =",
+            f"[{x}]",
+            f"[{x},",
+            f" {x},",
+            f" {x}]",
+            f" {x}(",
+            f" | {x}",
+            f"{x} |",
+        )

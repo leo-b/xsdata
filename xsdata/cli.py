@@ -43,7 +43,7 @@ logging.captureWarnings(True)
 @click.pass_context
 @click.version_option(__version__)
 def cli(ctx: click.Context, **kwargs: Any):
-    """xsdata command line interface."""
+    """Xsdata command line interface."""
     logger.setLevel(logging.INFO)
     formatwarning_orig = warnings.formatwarning
     logger.info(
@@ -116,6 +116,8 @@ def download(source: str, output: str):
 )
 @click.option("-c", "--config", default=".xsdata.xml", help="Project configuration")
 @click.option("-pp", "--print", is_flag=True, default=False, help="Print output")
+@click.option("--cache", is_flag=True, default=False, help="Cache sources loading")
+@click.option("--debug", is_flag=True, default=False, help="Show debug messages")
 @model_options(GeneratorOutput)
 def generate(**kwargs: Any):
     """
@@ -125,8 +127,14 @@ def generate(**kwargs: Any):
     The input source can be either a filepath, uri or a directory
     containing xml, json, xsd and wsdl files.
     """
+
+    debug = kwargs.pop("debug")
+    if debug:
+        logger.setLevel(logging.DEBUG)
+
     source = kwargs.pop("source")
     stdout = kwargs.pop("print")
+    cache = kwargs.pop("cache")
     recursive = kwargs.pop("recursive")
     config_file = Path(kwargs.pop("config")).resolve()
 
@@ -136,7 +144,7 @@ def generate(**kwargs: Any):
 
     transformer = SchemaTransformer(config=config, print=stdout)
     uris = sorted(resolve_source(source, recursive=recursive))
-    transformer.process(uris)
+    transformer.process(uris, cache=cache)
 
     handler.emit_warnings()
 

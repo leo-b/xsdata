@@ -29,6 +29,10 @@ class AttrTests(FactoryTestCase):
         attr.namespace = __file__
         self.assertNotEqual(attr, clone)
 
+    def test_property_key(self):
+        attr = AttrFactory.attribute(name="a", namespace="b")
+        self.assertEqual("Attribute.b.a", attr.key)
+
     def test_property_is_property(self):
         self.assertTrue(AttrFactory.attribute().is_attribute)
         self.assertTrue(AttrFactory.any_attribute().is_attribute)
@@ -55,6 +59,13 @@ class AttrTests(FactoryTestCase):
     def test_property_is_list(self):
         attr = AttrFactory.create(restrictions=Restrictions(max_occurs=2))
         self.assertTrue(attr.is_list)
+
+        attr.restrictions.max_occurs = 1
+        self.assertFalse(attr.is_list)
+
+    def test_property_is_prohibited(self):
+        attr = AttrFactory.create(restrictions=Restrictions(max_occurs=0))
+        self.assertTrue(attr.is_prohibited)
 
         attr.restrictions.max_occurs = 1
         self.assertFalse(attr.is_list)

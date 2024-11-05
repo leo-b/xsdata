@@ -161,9 +161,11 @@ class ProcessAttributeTypes(RelativeHandlerInterface):
         Replace the given attribute type with the types of the single field
         source class.
 
-        Ignore enumerations and gracefully handle dump types with no attributes.
+        Ignore enumerations and gracefully handle dump types with no
+        attributes.
 
-        :raises: AnalyzerValueError if the source class has more than one attributes
+        :raises: AnalyzerValueError if the source class has more than
+            one attributes
         """
         source_attr = source.attrs[0]
         index = attr.types.index(attr_type)
@@ -195,6 +197,9 @@ class ProcessAttributeTypes(RelativeHandlerInterface):
         """Update circular reference flag."""
         attr_type.reference = id(source)
         attr_type.circular = self.is_circular_dependency(source, target, set())
+
+        if attr_type.circular:
+            logger.debug("Possible circular reference %s, %s", target.name, source.name)
 
     def is_circular_dependency(self, source: Class, target: Class, seen: Set) -> bool:
         """Check if any source dependencies recursively match the target

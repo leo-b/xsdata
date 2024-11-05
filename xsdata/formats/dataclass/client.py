@@ -32,6 +32,7 @@ class Config(NamedTuple):
     soap_action: str
     input: Type
     output: Type
+    encoding: Optional[str] = None
 
     @classmethod
     def from_service(cls, obj: Any, **kwargs: Any) -> "Config":
@@ -98,7 +99,8 @@ class Client:
 
         Don't mutate input headers dictionary.
 
-        :raises ClientValueError: If the service transport type is unsupported.
+        :raises ClientValueError: If the service transport type is
+            unsupported.
         """
         result = headers.copy()
         if self.config.transport == TransportTypes.SOAP:
@@ -116,8 +118,8 @@ class Client:
         """
         Prepare and serialize payload to be sent.
 
-        :raises ClientValueError: If the config input type doesn't match the given
-            input.
+        :raises ClientValueError: If the config input type doesn't match
+            the given input.
         """
         if isinstance(obj, Dict):
             obj = self.dict_converter.convert(obj, self.config.input)
@@ -129,4 +131,8 @@ class Client:
                 f"got `{type(obj).__name__}`"
             )
 
-        return self.serializer.render(obj)
+        result = self.serializer.render(obj)
+        if self.config.encoding:
+            return result.encode(self.config.encoding)
+
+        return result

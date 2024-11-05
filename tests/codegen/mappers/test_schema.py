@@ -180,13 +180,14 @@ class SchemaMapperTests(FactoryTestCase):
         bar_type = AttrTypeFactory.create(qname="bar")
         foo_type = AttrTypeFactory.create(qname="foo")
 
-        bar = ExtensionFactory.create(bar_type)
-        double = ExtensionFactory.create(bar_type)
-        foo = ExtensionFactory.create(foo_type)
+        bar = ExtensionFactory.create(bar_type, tag=Tag.RESTRICTION)
+        double = ExtensionFactory.create(bar_type, tag=Tag.RESTRICTION)
+        foo = ExtensionFactory.create(foo_type, tag=Tag.EXTENSION)
 
         mock_children_extensions.return_value = [bar, double, foo]
         self_ext = ExtensionFactory.reference(
             qname="{xsdata}something",
+            tag=Tag.ELEMENT,
             restrictions=Restrictions(min_occurs=1, max_occurs=1),
         )
 
@@ -238,7 +239,7 @@ class SchemaMapperTests(FactoryTestCase):
 
         child, restrictions = next(children)
         expected = Restrictions(
-            min_occurs=0, max_occurs=3, sequence=2, choice=str(id(choice))
+            path=[("s", id(complex_type.sequence), 0, 3), ("c", id(choice), 1, 1)]
         )
         self.assertEqual(expected, restrictions)
 
@@ -253,15 +254,16 @@ class SchemaMapperTests(FactoryTestCase):
 
         item = ClassFactory.create(ns_map={"bk": "book"})
         children = SchemaMapper.children_extensions(complex_type, item)
-        expected = list(
-            map(
-                ExtensionFactory.create,
-                [
-                    AttrTypeFactory.create(qname=build_qname("book", "b")),
-                    AttrTypeFactory.create(qname=build_qname("book", "c")),
-                ],
-            )
-        )
+        expected = [
+            ExtensionFactory.create(
+                AttrTypeFactory.create(qname=build_qname("book", "b")),
+                tag=Tag.RESTRICTION,
+            ),
+            ExtensionFactory.create(
+                AttrTypeFactory.create(qname=build_qname("book", "c")),
+                tag=Tag.EXTENSION,
+            ),
+        ]
 
         self.assertIsInstance(children, GeneratorType)
         self.assertEqual(expected, list(children))
@@ -318,12 +320,6 @@ class SchemaMapperTests(FactoryTestCase):
         self.assertEqual({"bar": "foo", "foo": "bar"}, item.ns_map)
         mock_build_class_attribute_types.assert_called_once_with(item, attribute)
         mock_element_namespace.assert_called_once_with(attribute, item.target_namespace)
-
-    def test_build_class_attribute_skip_prohibited(self):
-        item = ClassFactory.create(ns_map={"bar": "foo"})
-        attribute = Attribute(use=UseType.PROHIBITED)
-        SchemaMapper.build_class_attribute(item, attribute, Restrictions())
-        self.assertEqual(0, len(item.attrs))
 
     @mock.patch.object(Attribute, "attr_types", new_callable=mock.PropertyMock)
     @mock.patch.object(SchemaMapper, "build_inner_classes")

@@ -34,7 +34,8 @@ class JsonParser(AbstractParser):
 
     :param config: Parser configuration
     :param context: Model context provider
-    :param load_factory: Replace the default json.load call with another implementation
+    :param load_factory: Replace the default json.load call with another
+        implementation
     """
 
     config: ParserConfig = field(default_factory=ParserConfig)
@@ -74,7 +75,7 @@ class JsonParser(AbstractParser):
         try:
             origin = get_origin(clazz)
             list_type = False
-            if origin is List:
+            if origin is list:
                 list_type = True
                 args = get_args(clazz)
 
@@ -228,6 +229,9 @@ class JsonParser(AbstractParser):
             if choice:
                 return self.bind_text(meta, choice, value)
 
+            if value is None:
+                return value
+
             raise ParserError(
                 f"Failed to bind '{value}' "
                 f"to {meta.clazz.__qualname__}.{var.name} field"
@@ -286,8 +290,6 @@ class JsonParser(AbstractParser):
 
         if not isinstance(params, dict):
             value = self.bind_text(meta, var, params)
-        elif var.clazz:
-            value = self.bind_complex_type(meta, var, params)
         elif xsi_type:
             clazz: Optional[Type] = self.context.find_type(xsi_type)
 
@@ -295,6 +297,8 @@ class JsonParser(AbstractParser):
                 raise ParserError(f"Unable to locate xsi:type `{xsi_type}`")
 
             value = self.bind_dataclass(params, clazz)
+        elif var.clazz:
+            value = self.bind_complex_type(meta, var, params)
         else:
             value = self.bind_best_dataclass(params, meta.element_types)
 

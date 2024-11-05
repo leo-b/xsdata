@@ -5,6 +5,7 @@ from typing import List
 from typing import Optional
 
 from xsdata.codegen.handlers import AddAttributeSubstitutions
+from xsdata.codegen.handlers import CalculateAttributePaths
 from xsdata.codegen.handlers import CreateCompoundFields
 from xsdata.codegen.handlers import DesignateClassPackages
 from xsdata.codegen.handlers import FilterClasses
@@ -15,6 +16,8 @@ from xsdata.codegen.handlers import ProcessAttributeTypes
 from xsdata.codegen.handlers import ProcessMixedContentClass
 from xsdata.codegen.handlers import RenameDuplicateAttributes
 from xsdata.codegen.handlers import RenameDuplicateClasses
+from xsdata.codegen.handlers import ResetAttributeSequenceNumbers
+from xsdata.codegen.handlers import ResetAttributeSequences
 from xsdata.codegen.handlers import SanitizeAttributesDefaultValue
 from xsdata.codegen.handlers import SanitizeEnumerationClass
 from xsdata.codegen.handlers import UnnestInnerClasses
@@ -31,27 +34,33 @@ from xsdata.utils.constants import return_true
 
 
 class Steps:
-    FLATTEN = 10
-    SANITIZE = 20
-    RESOLVE = 30
-    FINALIZE = 40
+    UNGROUP = 10
+    FLATTEN = 20
+    SANITIZE = 30
+    RESOLVE = 40
+    FINALIZE = 50
 
 
 class ClassContainer(ContainerInterface):
-    __slots__ = ("data", "processors")
+    __slots__ = ("data", "processors", "step")
 
     def __init__(self, config: GeneratorConfig):
         """Initialize a class container instance with its processors based on
         the provided configuration."""
         super().__init__(config)
 
+        self.step: int = 0
         self.data: Dict = {}
 
-        self.processors = {
-            Steps.FLATTEN: [
+        self.processors: Dict[int, List] = {
+            Steps.UNGROUP: [
                 FlattenAttributeGroups(self),
+            ],
+            Steps.FLATTEN: [
+                CalculateAttributePaths(),
                 FlattenClassExtensions(self),
                 SanitizeEnumerationClass(self),
+                UpdateAttributesEffectiveChoice(),
                 UnnestInnerClasses(self),
                 AddAttributeSubstitutions(self),
                 ProcessAttributeTypes(self),
@@ -59,16 +68,18 @@ class ClassContainer(ContainerInterface):
                 ProcessMixedContentClass(),
             ],
             Steps.SANITIZE: [
-                UpdateAttributesEffectiveChoice(),
+                ResetAttributeSequences(),
+                RenameDuplicateAttributes(),
                 SanitizeAttributesDefaultValue(self),
             ],
             Steps.RESOLVE: [
                 ValidateAttributesOverrides(self),
-                RenameDuplicateAttributes(),
             ],
             Steps.FINALIZE: [
                 VacuumInnerClasses(),
                 CreateCompoundFields(self),
+                # Prettify things!!!
+                ResetAttributeSequenceNumbers(self),
             ],
         }
 
@@ -82,8 +93,8 @@ class ClassContainer(ContainerInterface):
         condition callable."""
         for row in self.data.get(qname, []):
             if condition(row):
-                if row.status == Status.RAW:
-                    self.process_class(row, Steps.FLATTEN)
+                if row.status < self.step:
+                    self.process_class(row, self.step)
                     return self.find(qname, condition)
 
                 return row
@@ -91,8 +102,8 @@ class ClassContainer(ContainerInterface):
 
     def find_inner(self, source: Class, qname: str) -> Class:
         inner = ClassUtils.find_inner(source, qname)
-        if inner.status == Status.RAW:
-            self.process_class(inner, Steps.FLATTEN)
+        if inner.status < self.step:
+            self.process_class(inner, self.step)
 
         return inner
 
@@ -104,17 +115,9 @@ class ClassContainer(ContainerInterface):
         return classes[0]
 
     def process(self):
-        """
-        Run all the process handlers.
-
-        Steps
-            1. Flatten extensions, attribute types
-            2. Filter classes to be actually generated
-            3. Sanitize attributes and extensions
-            4. Resolve attributes conflicts
-            5. Replace repeatable elements with compound fields
-            6. Designate packages and modules
-        """
+        """The hidden naive recipe of processing xsd models."""
+        self.process_classes(Steps.UNGROUP)
+        self.remove_groups()
         self.process_classes(Steps.FLATTEN)
         self.filter_classes()
         self.process_classes(Steps.SANITIZE)
@@ -123,6 +126,7 @@ class ClassContainer(ContainerInterface):
         self.designate_classes()
 
     def process_classes(self, step: int) -> None:
+        self.step = step
         for obj in self:
             if obj.status < step:
                 self.process_class(obj, step)
@@ -150,6 +154,9 @@ class ClassContainer(ContainerInterface):
     def filter_classes(self):
         """Filter the classes to be generated."""
         FilterClasses(self).run()
+
+    def remove_groups(self):
+        self.set([x for x in iter(self) if not x.is_group])
 
     def add(self, item: Class):
         """Add class item to the container."""

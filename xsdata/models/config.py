@@ -1,6 +1,8 @@
+import re
 import sys
 import warnings
 from dataclasses import dataclass
+from dataclasses import field
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -8,6 +10,7 @@ from typing import Callable
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Pattern
 from typing import TextIO
 
 from xsdata import __version__
@@ -165,6 +168,18 @@ class ObjectType(Enum):
     PACKAGE = "package"
 
 
+class ExtensionType(Enum):
+    """
+    Extension type enumeration.
+
+    :cvar CLASS: class
+    :cvar DECORATOR: decorator
+    """
+
+    CLASS = "class"
+    DECORATOR = "decorator"
+
+
 @dataclass
 class OutputFormat:
     """
@@ -173,11 +188,14 @@ class OutputFormat:
     :param value: Output format name, default: dataclasses
     :param repr: Generate __repr__ method, default: true
     :param eq: Generate __eq__ method, default: true
-    :param order: Generate  __lt__, __le__, __gt__, and __ge__ methods, default: false
-    :param unsafe_hash: Generate __hash__ method if not frozen, default: false
+    :param order: Generate __lt__, __le__, __gt__, and __ge__ methods,
+        default: false
+    :param unsafe_hash: Generate __hash__ method if not frozen, default:
+        false
     :param frozen: Enable read only properties, default false
     :param slots: Enable __slots__, default: false, python>=3.10 Only
-    :param kw_only: Enable keyword only arguments, default: false, python>=3.10 Only
+    :param kw_only: Enable keyword only arguments, default: false,
+        python>=3.10 Only
     """
 
     value: str = text_node(default="dataclasses", cli="output")
@@ -217,11 +235,13 @@ class CompoundFields:
     """
     Compound fields options.
 
-    :param enabled: Use compound fields for repeatable elements, default: false
+    :param enabled: Use compound fields for repeatable elements,
+        default: false
     :param default_name: Default compound field name, default: choice
-    :param force_default_name: Always use the default compound field, otherwise
-        if the number of elements is less than 4 the generator will try to dynamically
-        create the field name eg. hat_or_dress_or_something.
+    :param force_default_name: Always use the default compound field,
+        otherwise if the number of elements is less than 4 the generator
+        will try to dynamically create the field name eg.
+        hat_or_dress_or_something.
     """
 
     enabled: bool = text_node(default=False, cli="compound-fields")
@@ -240,8 +260,12 @@ class GeneratorOutput:
     :param docstring_style: Docstring style, default: reStructuredText
     :param filter_strategy: Class filter strategy, default: globals
     :param relative_imports: Use relative imports, default: false
-    :param compound_fields: Use compound fields for repeatable elements, default: false
+    :param compound_fields: Use compound fields for repeatable elements,
+        default: false
     :param max_line_length: Adjust the maximum line length, default: 79
+    :param subscriptable_types: Use PEP-585 generics for standard collections,
+        default: false, python>=3.9 Only
+    :param union_type: Use PEP-604 union type, default: false, python>=3.10 Only
     :param postponed_annotations: Enable postponed evaluation of annotations,
         default: false, python>=3.7 Only
     :param unnest_classes: Move inner classes to upper level, default: false
@@ -262,10 +286,37 @@ class GeneratorOutput:
     relative_imports: bool = element(default=False)
     compound_fields: CompoundFields = element(default_factory=CompoundFields)
     max_line_length: int = attribute(default=79)
+    subscriptable_types: bool = attribute(default=False)
+    union_type: bool = attribute(default=False)
     postponed_annotations: bool = element(default=False)
     unnest_classes: bool = element(default=False)
     ignore_patterns: bool = element(default=False)
     include_header: bool = element(default=False)
+
+    def __post_init__(self):
+        self.validate()
+
+    def validate(self):
+        if self.subscriptable_types and sys.version_info < (3, 9):
+            self.subscriptable_types = False
+            warnings.warn(
+                "Generics PEP 585 requires python >= 3.9, reverting...",
+                CodeGenerationWarning,
+            )
+
+        if self.union_type and sys.version_info < (3, 10):
+            self.union_type = False
+            warnings.warn(
+                "UnionType PEP 604 requires python >= 3.10, reverting...",
+                CodeGenerationWarning,
+            )
+
+        if self.union_type and not self.postponed_annotations:
+            self.postponed_annotations = True
+            warnings.warn(
+                "Enabling postponed annotations, because `union_type==True`",
+                CodeGenerationWarning,
+            )
 
     def update(self, **kwargs: Any):
         objects.update(self, **kwargs)
@@ -376,6 +427,54 @@ class GeneratorSubstitution:
 
 
 @dataclass
+class GeneratorExtension:
+    """
+    Add decorators or base classes on the generated classes that match the
+    class name pattern.
+
+    :param type: The extension type
+    :param class_name: The class name or a pattern to apply the
+        extension
+    :param import_string: The import string of the extension type
+    :param prepend: Prepend or append decorator or base class
+    :param apply_if_derived: Apply or skip if the class is already a
+        subclass
+    """
+
+    type: ExtensionType = attribute(required=True)
+    class_name: str = attribute(required=True, name="class")
+    import_string: str = attribute(required=True, name="import")
+    prepend: bool = attribute(default=False)
+    apply_if_derived: bool = attribute(default=False, name="applyIfDerived")
+
+    module_path: str = field(
+        init=False,
+        metadata={"type": "Ignore"},
+    )
+    func_name: str = field(
+        init=False,
+        metadata={"type": "Ignore"},
+    )
+    pattern: Pattern = field(
+        init=False,
+        metadata={"type": "Ignore"},
+    )
+
+    def __post_init__(self):
+        try:
+            self.module_path, self.func_name = self.import_string.rsplit(".", 1)
+        except (ValueError, AttributeError):
+            raise GeneratorConfigError(
+                f"Invalid extension import '{self.import_string}'"
+            )
+
+        try:
+            self.pattern = re.compile(self.class_name)
+        except re.error:
+            raise GeneratorConfigError(f"Failed to compile pattern '{self.class_name}'")
+
+
+@dataclass
 class GeneratorSubstitutions:
     """
     Generator search and replace substitutions for classes, fields, packages
@@ -391,6 +490,20 @@ class GeneratorSubstitutions:
 
 
 @dataclass
+class GeneratorExtensions:
+    """
+    Generator extensions for classes. The process runs after the default naming
+    conventions.
+
+    .. warning:: The generator doesn't validate imports!
+
+    :param extension: The list of extensions
+    """
+
+    extension: List[GeneratorExtension] = array_element()
+
+
+@dataclass
 class GeneratorConfig:
     """
     Generator configuration binding model.
@@ -398,9 +511,12 @@ class GeneratorConfig:
     :cvar version: xsdata version number the config was created/updated
     :param output: Output options
     :param conventions: Generator conventions
-    :param aliases: Generator aliases, Deprecated since v21.12, use substitutions
-    :param substitutions: Generator search and replace substitutions for classes,
-        fields, packages and modules names.
+    :param aliases: Generator aliases, Deprecated since v21.12, use
+        substitutions
+    :param substitutions: Generator search and replace substitutions for
+        classes, fields, packages and modules names.
+    :param extensions: Generator custom base classes and decorators for
+        classes.
     """
 
     class Meta:
@@ -414,6 +530,7 @@ class GeneratorConfig:
     substitutions: GeneratorSubstitutions = element(
         default_factory=GeneratorSubstitutions
     )
+    extensions: GeneratorExtensions = element(default_factory=GeneratorExtensions)
 
     def __post_init__(self):
         if self.aliases:

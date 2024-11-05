@@ -5,7 +5,9 @@ from tests.fixtures.datatypes import Telephone
 from xsdata.codegen.models import Restrictions
 from xsdata.formats.dataclass.filters import Filters
 from xsdata.models.config import DocstringStyle
+from xsdata.models.config import ExtensionType
 from xsdata.models.config import GeneratorConfig
+from xsdata.models.config import GeneratorExtension
 from xsdata.models.config import GeneratorSubstitution
 from xsdata.models.config import NameCase
 from xsdata.models.config import ObjectType
@@ -14,6 +16,8 @@ from xsdata.models.enums import Namespace
 from xsdata.models.enums import Tag
 from xsdata.utils.testing import AttrFactory
 from xsdata.utils.testing import AttrTypeFactory
+from xsdata.utils.testing import ClassFactory
+from xsdata.utils.testing import ExtensionFactory
 from xsdata.utils.testing import FactoryTestCase
 
 type_str = AttrTypeFactory.native(DataType.STRING)
@@ -41,6 +45,102 @@ class FiltersTests(FactoryTestCase):
         self.assertEqual("ListType", self.filters.class_name("List"))
         self.assertEqual("TypeType", self.filters.class_name(".*"))
         self.assertEqual("Cbad", self.filters.class_name("abcd"))
+
+    def test_class_bases(self):
+        etp = ExtensionType.CLASS
+        self.filters.extensions[etp] = [
+            GeneratorExtension(
+                type=etp,
+                class_name=".*Bar",
+                import_string="a.b",
+                apply_if_derived=True,
+                prepend=False,
+            ),
+            GeneratorExtension(
+                type=etp,
+                class_name="Foo.*",
+                import_string="a.b",
+                apply_if_derived=True,
+                prepend=True,
+            ),
+            GeneratorExtension(
+                type=etp,
+                class_name="Foo.*",
+                import_string="a.c",
+                apply_if_derived=True,
+                prepend=True,
+            ),
+            GeneratorExtension(
+                type=etp,
+                class_name="Foo.*",
+                import_string="a.d",
+                apply_if_derived=False,
+                prepend=True,
+            ),
+            GeneratorExtension(
+                type=etp,
+                class_name="Nope.*",
+                import_string="a.e",
+                apply_if_derived=True,
+                prepend=False,
+            ),
+        ]
+        target = ClassFactory.create(extensions=ExtensionFactory.list(1))
+
+        expected = self.filters.class_bases(target, "FooBar")
+        self.assertEqual(["c", "b", "AttrB"], expected)
+
+        target.extensions.clear()
+        expected = self.filters.class_bases(target, "FooBar")
+        self.assertEqual(["d", "c", "b"], expected)
+
+    def test_class_annotations(self):
+        etp = ExtensionType.DECORATOR
+        self.filters.extensions[etp] = [
+            GeneratorExtension(
+                type=etp,
+                class_name=".*Bar",
+                import_string="a.b",
+                apply_if_derived=True,
+                prepend=False,
+            ),
+            GeneratorExtension(
+                type=etp,
+                class_name="Foo.*",
+                import_string="a.b",
+                apply_if_derived=True,
+                prepend=True,
+            ),
+            GeneratorExtension(
+                type=etp,
+                class_name="Foo.*",
+                import_string="a.c",
+                apply_if_derived=True,
+                prepend=True,
+            ),
+            GeneratorExtension(
+                type=etp,
+                class_name="Foo.*",
+                import_string="a.d",
+                apply_if_derived=False,
+                prepend=False,
+            ),
+            GeneratorExtension(
+                type=etp,
+                class_name="Nope.*",
+                import_string="a.e",
+                apply_if_derived=True,
+                prepend=False,
+            ),
+        ]
+        target = ClassFactory.create(extensions=ExtensionFactory.list(1))
+
+        expected = self.filters.class_annotations(target, "FooBar")
+        self.assertEqual(["@c", "@b", "@dataclass"], expected)
+
+        target.extensions.clear()
+        expected = self.filters.class_annotations(target, "FooBar")
+        self.assertEqual(["@c", "@b", "@dataclass", "@d"], expected)
 
     def test_field_name(self):
         self.filters.substitutions[ObjectType.FIELD]["abc"] = "cba"
@@ -140,6 +240,22 @@ class FiltersTests(FactoryTestCase):
             "        metadata={\n"
             '            "name": "attr_B",\n'
             '            "type": "Element",\n'
+            "        }\n"
+            "    )"
+        )
+        self.assertEqual(expected, result)
+
+    def test_field_definition_with_prohibited_attr(self):
+        attr = AttrFactory.native(DataType.INT)
+        attr.restrictions.max_occurs = 0
+        attr.default = "1"
+
+        result = self.filters.field_definition(attr, {}, None, ["Root"])
+        expected = (
+            "field(\n"
+            "        init=False,\n"
+            "        metadata={\n"
+            '            "type": "Ignore",\n'
             "        }\n"
             "    )"
         )
@@ -424,6 +540,9 @@ class FiltersTests(FactoryTestCase):
         attr.restrictions.nillable = True
         self.assertEqual("Optional[FooBar]", self.filters.field_type(attr, []))
 
+        self.filters.union_type = True
+        self.assertEqual("None | FooBar", self.filters.field_type(attr, []))
+
     def test_field_type_with_optional_value(self):
         attr = AttrFactory.create(types=AttrTypeFactory.list(1, qname="foo_bar"))
 
@@ -434,6 +553,9 @@ class FiltersTests(FactoryTestCase):
 
         attr.restrictions.min_occurs = 0
         self.assertEqual("Optional[FooBar]", self.filters.field_type(attr, []))
+
+        self.filters.union_type = True
+        self.assertEqual("None | FooBar", self.filters.field_type(attr, []))
 
     def test_field_type_with_circular_reference(self):
         attr = AttrFactory.create(
@@ -450,6 +572,13 @@ class FiltersTests(FactoryTestCase):
         )
         self.assertEqual(
             'Optional["Parent.Inner.FooBar"]',
+            self.filters.field_type(attr, ["Parent", "Inner"]),
+        )
+
+        self.filters.postponed_annotations = True
+        self.filters.union_type = True
+        self.assertEqual(
+            "None | Parent.Inner.FooBar",
             self.filters.field_type(attr, ["Parent", "Inner"]),
         )
 
@@ -479,6 +608,18 @@ class FiltersTests(FactoryTestCase):
             self.filters.field_type(attr, ["A", "Parent"]),
         )
 
+        self.filters.subscriptable_types = True
+        self.assertEqual(
+            'tuple["A.Parent.FooBar", ...]',
+            self.filters.field_type(attr, ["A", "Parent"]),
+        )
+
+        self.filters.format.frozen = False
+        self.assertEqual(
+            'list["A.Parent.FooBar"]',
+            self.filters.field_type(attr, ["A", "Parent"]),
+        )
+
     def test_field_type_with_token_attr(self):
         attr = AttrFactory.create(
             types=AttrTypeFactory.list(1, qname="foo_bar"),
@@ -496,6 +637,11 @@ class FiltersTests(FactoryTestCase):
         attr.restrictions.max_occurs = 2
         self.assertEqual(
             "Tuple[Tuple[FooBar, ...], ...]", self.filters.field_type(attr, [])
+        )
+
+        self.filters.subscriptable_types = True
+        self.assertEqual(
+            "tuple[tuple[FooBar, ...], ...]", self.filters.field_type(attr, [])
         )
 
     def test_field_type_with_alias(self):
@@ -524,24 +670,53 @@ class FiltersTests(FactoryTestCase):
             self.filters.field_type(attr, ["A", "Parent"]),
         )
 
+        self.filters.union_type = True
+        self.assertEqual(
+            'List["A.Parent.BossLife" | int]',
+            self.filters.field_type(attr, ["A", "Parent"]),
+        )
+        self.filters.subscriptable_types = True
+        self.assertEqual(
+            'list["A.Parent.BossLife" | int]',
+            self.filters.field_type(attr, ["A", "Parent"]),
+        )
+
     def test_field_type_with_any_attribute(self):
         attr = AttrFactory.any_attribute()
 
         self.assertEqual("Dict[str, str]", self.filters.field_type(attr, ["a", "b"]))
+
+        self.filters.subscriptable_types = True
+        self.assertEqual("dict[str, str]", self.filters.field_type(attr, ["a", "b"]))
 
     def test_field_type_with_native_type(self):
         attr = AttrFactory.create(
             types=[
                 AttrTypeFactory.native(DataType.INT),
                 AttrTypeFactory.native(DataType.POSITIVE_INTEGER),
+                AttrTypeFactory.native(DataType.STRING),
             ]
         )
-        self.assertEqual("Optional[int]", self.filters.field_type(attr, ["a", "b"]))
+        self.assertEqual(
+            "Optional[Union[int, str]]", self.filters.field_type(attr, ["a", "b"])
+        )
+
+        self.filters.union_type = True
+        self.assertEqual("None | int | str", self.filters.field_type(attr, ["a", "b"]))
+
+    def test_field_type_with_prohibited_attr(self):
+        attr = AttrFactory.create(restrictions=Restrictions(max_occurs=0))
+
+        self.assertEqual("Any", self.filters.field_type(attr, ["a", "b"]))
 
     def test_choice_type(self):
         choice = AttrFactory.create(types=[AttrTypeFactory.create("foobar")])
         actual = self.filters.choice_type(choice, ["a", "b"])
         self.assertEqual("Type[Foobar]", actual)
+
+        self.filters.subscriptable_types = True
+        actual = self.filters.choice_type(choice, ["a", "b"])
+        self.assertEqual("type[Foobar]", actual)
 
     def test_choice_type_with_forward_reference(self):
         choice = AttrFactory.create(
@@ -557,10 +732,22 @@ class FiltersTests(FactoryTestCase):
         actual = self.filters.choice_type(choice, ["a", "b"])
         self.assertEqual('Type["Foobar"]', actual)
 
+        self.filters.postponed_annotations = True
+        actual = self.filters.choice_type(choice, ["a", "b"])
+        self.assertEqual("Type[Foobar]", actual)
+
     def test_choice_type_with_multiple_types(self):
         choice = AttrFactory.create(types=[type_str, type_bool])
         actual = self.filters.choice_type(choice, ["a", "b"])
         self.assertEqual("Type[Union[str, bool]]", actual)
+
+        self.filters.subscriptable_types = True
+        actual = self.filters.choice_type(choice, ["a", "b"])
+        self.assertEqual("type[Union[str, bool]]", actual)
+
+        self.filters.union_type = True
+        actual = self.filters.choice_type(choice, ["a", "b"])
+        self.assertEqual("type[str | bool]", actual)
 
     def test_choice_type_with_list_types_are_ignored(self):
         choice = AttrFactory.create(types=[type_str, type_bool])
@@ -577,6 +764,11 @@ class FiltersTests(FactoryTestCase):
         self.filters.format.frozen = True
         actual = self.filters.choice_type(choice, ["a", "b"])
         self.assertEqual("Type[Tuple[Union[str, bool], ...]]", actual)
+
+        self.filters.union_type = True
+        self.filters.subscriptable_types = True
+        actual = self.filters.choice_type(choice, ["a", "b"])
+        self.assertEqual("type[tuple[str | bool, ...]]", actual)
 
     def test_default_imports_with_decimal(self):
         expected = "from decimal import Decimal"
@@ -654,6 +846,10 @@ class FiltersTests(FactoryTestCase):
 
         output = " Type["
         expected = "from typing import Type"
+        self.assertIn(expected, self.filters.default_imports(output))
+
+        output = ": Any = "
+        expected = "from typing import Any"
         self.assertIn(expected, self.filters.default_imports(output))
 
     def test_default_imports_combo(self):
@@ -792,6 +988,14 @@ class FiltersTests(FactoryTestCase):
         config.substitutions.substitution.append(
             GeneratorSubstitution(ObjectType.PACKAGE, "m", "n")
         )
+        config.extensions.extension.extend(
+            [
+                GeneratorExtension(ExtensionType.DECORATOR, "a", "a.b"),
+                GeneratorExtension(ExtensionType.DECORATOR, "b", "a.c"),
+                GeneratorExtension(ExtensionType.CLASS, "c", "a.d"),
+                GeneratorExtension(ExtensionType.CLASS, "d", "a.e"),
+            ]
+        )
 
         filters = Filters(config)
 
@@ -814,3 +1018,17 @@ class FiltersTests(FactoryTestCase):
             ObjectType.PACKAGE: {"m": "n"},
         }
         self.assertEqual(expected_substitutions, filters.substitutions)
+
+        expected_extensions = {
+            ExtensionType.DECORATOR: config.extensions.extension[0:2],
+            ExtensionType.CLASS: config.extensions.extension[2:4],
+        }
+        self.assertEqual(expected_extensions, filters.extensions)
+
+        expected_imports = {
+            "b": {"@b"},
+            "c": {"@c"},
+            "d": {"(d", " d)"},
+            "e": {"(e", " e)"},
+        }
+        self.assertEqual(expected_imports, filters.import_patterns["a"])

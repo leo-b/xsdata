@@ -19,11 +19,12 @@ from xsdata.utils.constants import return_input
 
 class XmlContext:
     """
-    The service provider for binding operations metadata.
+    The service provider for binding operations' metadata.
 
     :param element_name_generator: Default element name generator
     :param attribute_name_generator: Default attribute name generator
     :param class_type: Default class type `dataclasses`
+    :param models_package: Restrict auto locate to a specific package
     """
 
     __slots__ = (
@@ -33,6 +34,7 @@ class XmlContext:
         "cache",
         "xsi_cache",
         "sys_modules",
+        "models_package",
     )
 
     def __init__(
@@ -40,6 +42,7 @@ class XmlContext:
         element_name_generator: Callable = return_input,
         attribute_name_generator: Callable = return_input,
         class_type: str = "dataclasses",
+        models_package: Optional[str] = None,
     ):
         self.element_name_generator = element_name_generator
         self.attribute_name_generator = attribute_name_generator
@@ -47,12 +50,23 @@ class XmlContext:
 
         self.cache: Dict[Type, XmlMeta] = {}
         self.xsi_cache: Dict[str, List[Type]] = defaultdict(list)
+        self.models_package = models_package
         self.sys_modules = 0
 
     def reset(self):
         self.cache.clear()
         self.xsi_cache.clear()
         self.sys_modules = 0
+
+    def get_builder(
+        self, globalns: Optional[Dict[str, Callable]] = None
+    ) -> XmlMetaBuilder:
+        return XmlMetaBuilder(
+            class_type=self.class_type,
+            element_name_generator=self.element_name_generator,
+            attribute_name_generator=self.attribute_name_generator,
+            globalns=globalns,
+        )
 
     def fetch(
         self,
@@ -66,9 +80,9 @@ class XmlContext:
 
         :param clazz: The requested dataclass type
         :param parent_ns: The inherited parent namespace
-        :param xsi_type: if present it means that the given clazz is derived and the
-            lookup procedure needs to check and match a dataclass model to the qualified
-            name instead
+        :param xsi_type: if present it means that the given clazz is
+            derived and the lookup procedure needs to check and match a
+            dataclass model to the qualified name instead
         """
         meta = self.build(clazz, parent_ns)
         subclass = None
@@ -83,19 +97,25 @@ class XmlContext:
             return
 
         self.xsi_cache.clear()
-        builder = XmlMetaBuilder(
-            class_type=self.class_type,
-            element_name_generator=self.element_name_generator,
-            attribute_name_generator=self.attribute_name_generator,
-        )
+        builder = self.get_builder()
         for clazz in self.get_subclasses(object):
-            if self.class_type.is_model(clazz):
-                meta = builder.build_class_meta(clazz, None)
+            if self.is_binding_model(clazz):
+                meta = builder.build_class_meta(clazz)
 
                 if meta.target_qname:
                     self.xsi_cache[meta.target_qname].append(clazz)
 
         self.sys_modules = len(sys.modules)
+
+    def is_binding_model(self, clazz: Type[T]) -> bool:
+        if not self.class_type.is_model(clazz):
+            return False
+
+        return not self.models_package or (
+            hasattr(clazz, "__module__")
+            and isinstance(clazz.__module__, str)
+            and clazz.__module__.startswith(self.models_package)
+        )
 
     def find_types(self, qname: str) -> List[Type[T]]:
         """
@@ -183,14 +203,8 @@ class XmlContext:
         :param clazz: A dataclass type
         :param parent_ns: The inherited parent namespace
         """
-
         if clazz not in self.cache:
-            builder = XmlMetaBuilder(
-                class_type=self.class_type,
-                element_name_generator=self.element_name_generator,
-                attribute_name_generator=self.attribute_name_generator,
-                globalns=globalns,
-            )
+            builder = self.get_builder(globalns)
             self.cache[clazz] = builder.build(clazz, parent_ns)
         return self.cache[clazz]
 
@@ -210,7 +224,14 @@ class XmlContext:
             meta = self.build(clazz)
             local_names = {var.local_name for var in meta.get_all_vars()}
             return not names.difference(local_names)
-        except XmlContextError:
+        except (XmlContextError, NameError):
+            # The dataclass includes unsupported typing annotations
+            # Let's remove it from xsi_cache
+            builder = self.get_builder()
+            target_qname = builder.build_class_meta(clazz).target_qname
+            if target_qname and target_qname in self.xsi_cache:
+                self.xsi_cache[target_qname].remove(clazz)
+
             return False
 
     @classmethod

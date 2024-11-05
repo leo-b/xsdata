@@ -7,9 +7,11 @@ from unittest import TestCase
 from xsdata import __version__
 from xsdata.exceptions import GeneratorConfigError
 from xsdata.exceptions import ParserError
+from xsdata.models.config import ExtensionType
 from xsdata.models.config import GeneratorAlias
 from xsdata.models.config import GeneratorAliases
 from xsdata.models.config import GeneratorConfig
+from xsdata.models.config import GeneratorExtension
 from xsdata.models.config import GeneratorOutput
 from xsdata.models.config import ObjectType
 from xsdata.models.config import OutputFormat
@@ -28,7 +30,7 @@ class GeneratorConfigTests(TestCase):
         expected = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             f'<Config xmlns="http://pypi.org/project/xsdata" version="{__version__}">\n'
-            '  <Output maxLineLength="79">\n'
+            '  <Output maxLineLength="79" subscriptableTypes="false" unionType="false">\n'
             "    <Package>generated</Package>\n"
             '    <Format repr="true" eq="true" order="false" unsafeHash="false" frozen="false" slots="false" kwOnly="false">dataclasses</Format>\n'
             "    <Structure>filenames</Structure>\n"
@@ -60,6 +62,7 @@ class GeneratorConfigTests(TestCase):
             '    <Substitution type="package" search="http://schemas.xmlsoap.org/soap/envelope/" replace="soapenv"/>\n'
             '    <Substitution type="class" search="(.*)Class$" replace="\\1Type"/>\n'
             "  </Substitutions>\n"
+            "  <Extensions/>\n"
             "</Config>\n"
         )
         self.assertEqual(expected, file_path.read_text())
@@ -69,7 +72,7 @@ class GeneratorConfigTests(TestCase):
         existing = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<Config xmlns="http://pypi.org/project/xsdata" version="20.8">\n'
-            '  <Output maxLineLength="79">\n'
+            '  <Output maxLineLength="79" subscriptableTypes="false" unionType="false">\n'
             "    <Package>foo.bar</Package>\n"
             "  </Output>\n"
             "  <Conventions>\n"
@@ -88,7 +91,7 @@ class GeneratorConfigTests(TestCase):
         expected = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             f'<Config xmlns="http://pypi.org/project/xsdata" version="{__version__}">\n'
-            '  <Output maxLineLength="79">\n'
+            '  <Output maxLineLength="79" subscriptableTypes="false" unionType="false">\n'
             "    <Package>foo.bar</Package>\n"
             '    <Format repr="true" eq="true" order="false" unsafeHash="false"'
             ' frozen="false" slots="false" kwOnly="false">dataclasses</Format>\n'
@@ -111,6 +114,7 @@ class GeneratorConfigTests(TestCase):
             "  </Conventions>\n"
             "  <Aliases/>\n"
             "  <Substitutions/>\n"
+            "  <Extensions/>\n"
             "</Config>\n"
         )
         self.assertEqual(expected, file_path.read_text())
@@ -134,6 +138,36 @@ class GeneratorConfigTests(TestCase):
             OutputFormat(eq=False, order=True)
 
         self.assertEqual("eq must be true if order is true", str(cm.exception))
+
+    def test_subscriptable_types_requires_390(self):
+        if sys.version_info < (3, 9):
+            with warnings.catch_warnings(record=True) as w:
+                self.assertFalse(
+                    GeneratorOutput(subscriptable_types=True).subscriptable_types
+                )
+
+            self.assertEqual(
+                "Generics PEP 585 requires python >= 3.9, reverting...",
+                str(w[-1].message),
+            )
+
+        else:
+            self.assertTrue(
+                GeneratorOutput(subscriptable_types=True).subscriptable_types
+            )
+
+    def test_use_union_type_requires_310(self):
+        if sys.version_info < (3, 10):
+            with warnings.catch_warnings(record=True) as w:
+                self.assertFalse(GeneratorOutput(union_type=True).union_type)
+
+            self.assertEqual(
+                "UnionType PEP 604 requires python >= 3.10, reverting...",
+                str(w[-1].message),
+            )
+
+        else:
+            self.assertTrue(GeneratorOutput(union_type=True).union_type)
 
     def test_format_slots_requires_310(self):
         if sys.version_info < (3, 10):
@@ -209,3 +243,19 @@ class GeneratorConfigTests(TestCase):
         config = GeneratorConfig.read(output_path)
         self.assertIsNone(config.aliases)
         self.assertEqual(4, len(config.substitutions.substitution))
+
+    def test_extension_with_invalid_import_string(self):
+        cases = [None, "", "bar"]
+        for case in cases:
+            with self.assertRaises(GeneratorConfigError) as cm:
+                GeneratorExtension(type=ExtensionType.DECORATOR, import_string=case)
+
+            self.assertEqual(f"Invalid extension import '{case}'", str(cm.exception))
+
+    def test_extension_with_invalid_class_name_pattern(self):
+        with self.assertRaises(GeneratorConfigError) as cm:
+            GeneratorExtension(
+                type=ExtensionType.DECORATOR, import_string="a.b", class_name="*Foo"
+            )
+
+        self.assertEqual(f"Failed to compile pattern '*Foo'", str(cm.exception))

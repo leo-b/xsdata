@@ -128,7 +128,8 @@ class AnyAttribute(AnnotationBase):
     """
     Model representation of a schema xs:anyAttribute element.
 
-    :param namespace: ##any | ##other) | List of anyURI | (##targetNamespace | ##local)
+    :param namespace: ##any | ##other) | List of anyURI |
+        (##targetNamespace | ##local)
     :param process_contents: (lax | skip | strict) : strict
     """
 
@@ -441,8 +442,7 @@ class All(AnnotationBase):
         max_occurs = sys.maxsize if self.max_occurs == "unbounded" else self.max_occurs
 
         return {
-            "min_occurs": self.min_occurs,
-            "max_occurs": max_occurs,
+            "path": [("a", id(self), self.min_occurs, max_occurs)],
         }
 
 
@@ -472,9 +472,7 @@ class Sequence(AnnotationBase):
         max_occurs = sys.maxsize if self.max_occurs == "unbounded" else self.max_occurs
 
         return {
-            "sequence": self.index,
-            "min_occurs": self.min_occurs,
-            "max_occurs": max_occurs,
+            "path": [("s", id(self), self.min_occurs, max_occurs)],
         }
 
 
@@ -501,13 +499,10 @@ class Choice(AnnotationBase):
     any: Array["Any"] = array_element()
 
     def get_restrictions(self) -> Dict[str, Anything]:
-        min_occurs = self.min_occurs if self.min_occurs > 1 else 0
         max_occurs = sys.maxsize if self.max_occurs == "unbounded" else self.max_occurs
 
         return {
-            "choice": str(id(self)),
-            "min_occurs": min_occurs,
-            "max_occurs": max_occurs,
+            "path": [("c", id(self), self.min_occurs, max_occurs)],
         }
 
 
@@ -546,8 +541,7 @@ class Group(AnnotationBase):
         max_occurs = sys.maxsize if self.max_occurs == "unbounded" else self.max_occurs
 
         return {
-            "min_occurs": self.min_occurs,
-            "max_occurs": max_occurs,
+            "path": [("g", id(self), self.min_occurs, max_occurs)],
         }
 
 
@@ -1053,8 +1047,7 @@ class Alternative(AnnotationBase):
 
     def get_restrictions(self) -> Dict[str, Anything]:
         return {
-            "choice": str(id(self)),
-            "min_occurs": 0,
+            "path": [("alt", id(self), 0, 1)],
         }
 
 
@@ -1070,7 +1063,8 @@ class Element(AnnotationBase):
     :param default:
     :param fixed:
     :param form: qualified | unqualified
-    :param block: (#all | List of (extension | restriction | substitution))
+    :param block: (#all | List of (extension | restriction |
+        substitution))
     :param final: (#all | List of (extension | restriction))
     :param target_namespace: anyURI
     :param simple_type:
@@ -1179,7 +1173,8 @@ class SchemaLocation(AnnotationBase):
     Model representation of a schema xs:schemaLocation element. Base schema
     location.
 
-    :param location: any url with a urllib supported scheme file: http:
+    :param location: any url with a urllib supported scheme file
+    : http:
     """
 
     location: Optional[str] = field(default=None)
@@ -1259,14 +1254,17 @@ class Schema(SchemaLocation):
     Model representation of a schema xs:schema element.
 
     :param target:
-    :param block_default: (#all | List of (extension | restriction | substitution))
+    :param block_default: (#all | List of (extension | restriction |
+        substitution))
     :param default_attributes: QName
-    :param final_default: (#all | List of extension | restriction | list | union) : ''
+    :param final_default: (#all | List of extension | restriction | list
+        | union) : ''
     :param target_namespace: anyURI
     :param version: token
     :param xmlns:
     :param element_form_default: (qualified | unqualified) : unqualified
-    :param attribute_form_default:  (qualified | unqualified) : unqualified
+    :param attribute_form_default: (qualified | unqualified) :
+        unqualified
     :param default_open_content:
     :param imports:
     :param redefines:

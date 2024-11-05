@@ -1,4 +1,4 @@
-.. image:: https://github.com/tefra/xsdata/raw/master/docs/_static/logo.svg
+.. image:: https://github.com/tefra/xsdata/raw/main/docs/_static/logo.svg
     :target: https://xsdata.readthedocs.io/
 
 Naive XML Bindings for python
@@ -10,7 +10,7 @@ Naive XML Bindings for python
 .. image:: https://readthedocs.org/projects/xsdata/badge
     :target: https://xsdata.readthedocs.io/
 
-.. image:: https://codecov.io/gh/tefra/xsdata/branch/master/graph/badge.svg
+.. image:: https://codecov.io/gh/tefra/xsdata/branch/main/graph/badge.svg
     :target: https://codecov.io/gh/tefra/xsdata
 
 .. image:: https://img.shields.io/github/languages/top/tefra/xsdata.svg
@@ -99,8 +99,14 @@ Features
 
 
 
-Changelog: 22.12 (2022-12-17)
------------------------------
-- Added option to ignore xml pattern restrictions `#727 <https://github.com/tefra/xsdata/pull/727>`_
-- Added globalns support via SerializerConfig `#724 <https://github.com/tefra/xsdata/pull/724>`_
-- Pinned docformatter version to v1.5.0 `#729 <https://github.com/tefra/xsdata/pull/729>`_
+Changelog: 23.6 (2023-06-24)
+----------------------------
+- Fixed conflicting enum values leading to wrong default values (`#806 <https://github.com/tefra/xsdata/pull/806>`_)
+- Added support for custom decorators and base classes (`#793 <https://github.com/tefra/xsdata/pull/793>`_)
+- Added parser config to load external dtd to resolve entities (`#797 <https://github.com/tefra/xsdata/pull/797>`_)
+- Added requests sessions on the wsdl client transport (`#798 <https://github.com/tefra/xsdata/pull/798>`_)
+- Added support subscriptable types and UnionType (`#801 <https://github.com/tefra/xsdata/pull/801>`_)
+- Added option to restrict models package for auto-locator (`#809 <https://github.com/tefra/xsdata/pull/809>`_)
+- Updated context to only cache supported classes (`#796 <https://github.com/tefra/xsdata/pull/796>`_)
+- Removed tox requirement (`#800 <https://github.com/tefra/xsdata/pull/800>`_)
+- Converted to pyproject.toml (`#802 <https://github.com/tefra/xsdata/pull/802>`_)

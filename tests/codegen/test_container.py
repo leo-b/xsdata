@@ -27,11 +27,6 @@ class ClassContainerTests(FactoryTestCase):
         container = ClassContainer(config)
         container.extend(classes)
 
-        expected = {
-            "{xsdata}foo": classes[:2],
-            "{xsdata}foobar": classes[2:],
-        }
-
         self.assertEqual(2, len(container.data))
         self.assertEqual(3, len(list(container)))
         self.assertEqual(classes, list(container))
@@ -44,17 +39,29 @@ class ClassContainerTests(FactoryTestCase):
         expected = {
             10: [
                 "FlattenAttributeGroups",
+            ],
+            20: [
+                "CalculateAttributePaths",
                 "FlattenClassExtensions",
                 "SanitizeEnumerationClass",
+                "UpdateAttributesEffectiveChoice",
                 "UnnestInnerClasses",
                 "AddAttributeSubstitutions",
                 "ProcessAttributeTypes",
                 "MergeAttributes",
                 "ProcessMixedContentClass",
             ],
-            20: ["UpdateAttributesEffectiveChoice", "SanitizeAttributesDefaultValue"],
-            30: ["ValidateAttributesOverrides", "RenameDuplicateAttributes"],
-            40: ["VacuumInnerClasses", "CreateCompoundFields"],
+            30: [
+                "ResetAttributeSequences",
+                "RenameDuplicateAttributes",
+                "SanitizeAttributesDefaultValue",
+            ],
+            40: ["ValidateAttributesOverrides"],
+            50: [
+                "VacuumInnerClasses",
+                "CreateCompoundFields",
+                "ResetAttributeSequenceNumbers",
+            ],
         }
 
         self.assertEqual(expected, actual)
@@ -69,6 +76,7 @@ class ClassContainerTests(FactoryTestCase):
         class_c = ClassFactory.enumeration(2, qname="b", status=Status.FLATTENING)
         mock_process_class.side_effect = process_class
         self.container.extend([class_a, class_b, class_c])
+        self.container.step = Steps.FLATTEN
 
         self.assertIsNone(self.container.find("nope"))
         self.assertEqual(class_a, self.container.find(class_a.qname))
@@ -89,6 +97,7 @@ class ClassContainerTests(FactoryTestCase):
             x.status = Status.FLATTENED
 
         mock_process_class.side_effect = process_class
+        self.container.step = Steps.FLATTEN
 
         self.assertEqual(first, self.container.find_inner(obj, "{a}a"))
         self.assertEqual(second, self.container.find_inner(obj, "{a}b"))
@@ -143,3 +152,14 @@ class ClassContainerTests(FactoryTestCase):
         expected = [complex_type, enum_1]
         container.filter_classes()
         self.assertEqual(expected, list(container))
+
+    def test_remove_groups(self):
+        classes = [
+            ClassFactory.create(tag=Tag.ATTRIBUTE_GROUP),
+            ClassFactory.create(tag=Tag.GROUP),
+            ClassFactory.create(tag=Tag.ELEMENT),
+        ]
+
+        self.container.extend(classes)
+        self.container.remove_groups()
+        self.assertEqual(1, len(list(self.container)))

@@ -1,5 +1,6 @@
 import copy
 from dataclasses import make_dataclass
+from pathlib import Path
 from unittest import mock
 
 from tests.fixtures.artists import Artist
@@ -78,6 +79,23 @@ class XmlContextTests(FactoryTestCase):
         field_names.update({"please", "dont", "exist"})  # Test matching with more
         self.assertIsNone(self.ctx.find_type_by_fields(field_names))
 
+    def test_local_names_match_remove_clazz_from_cache_on_error(self):
+        undefined = make_dataclass("UndefinedType", [("content", "Literal['yes']")])
+        unsupported = make_dataclass("UndefinedType", [("content", Path)])
+        uncached = make_dataclass("Uncached", [("content", Path)])
+
+        builder = self.ctx.get_builder()
+        for clazz in (undefined, unsupported):
+            meta = builder.build_class_meta(clazz)
+            self.ctx.xsi_cache[meta.target_qname].append(clazz)
+
+        self.assertFalse(self.ctx.local_names_match({"content"}, undefined))
+        self.assertFalse(self.ctx.local_names_match({"content"}, unsupported))
+        self.assertFalse(self.ctx.local_names_match({"content"}, uncached))
+
+        total = [x for types in self.ctx.cache.values() for x in types]
+        self.assertEqual(0, len(total))
+
     def test_find_subclass(self):
         a = make_dataclass("A", fields=[])
         b = make_dataclass("B", fields=[], bases=(a,))
@@ -90,6 +108,12 @@ class XmlContextTests(FactoryTestCase):
         self.assertIsNone(self.ctx.find_subclass(c, "A"))
         self.assertIsNone(self.ctx.find_subclass(c, "Unknown"))
         self.assertIsNone(self.ctx.find_subclass(c, "Other"))
+
+    def is_binding_model(self):
+        self.assertTrue(self.ctx.is_binding_model(ChoiceType))
+
+        self.ctx.models_package = "xsdata.models"
+        self.assertFalse(self.ctx.is_binding_model(ChoiceType))
 
     def test_is_derived(self):
         a = make_dataclass("A", fields=[])

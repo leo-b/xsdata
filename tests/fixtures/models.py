@@ -114,6 +114,19 @@ class ChoiceType:
         }
     )
 
+@dataclass
+class OptionalChoiceType:
+    a_or_b: Optional[object] = field(
+        metadata={
+            "type": "Elements",
+            "choices": (
+                {"name": "a", "type": TypeA},
+                {"name": "b", "type": TypeB},
+            ),
+        }
+    )
+
+
 
 @dataclass
 class UnionType:
@@ -147,7 +160,10 @@ class SequentialType:
         default_factory=list, metadata=dict(type="Element", sequence=1)
     )
     x3: List[int] = field(
-        default_factory=list, metadata=dict(type="Element", sequence=1)
+        default_factory=list, metadata=dict(type="Element", sequence=2)
+    )
+    x4: Optional[int] = field(
+        default=None, metadata=dict(type="Element", sequence=2)
     )
 
 
